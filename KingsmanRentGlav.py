@@ -2,6 +2,7 @@ import asyncio
 import uuid
 import re
 import html
+import os
 from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
@@ -11,12 +12,12 @@ from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
 
-# 🔧 Настройки
-BOT_TOKEN = "8148697332:AAGy6r-GNzqVYabKCQIlfQI-gCkbelQucFM"
-GROUP_ID = -1002773883024
-TOPIC_ORDERS = 81003
-TOPIC_SUPPORT = 81451
-ADMIN_IDS = [841285005]
+# 🔧 Настройки из переменных окружения (безопасность)
+BOT_TOKEN = os.getenv('BOT_TOKEN', "8148697332:AAGy6r-GNzqVYabKCQIlfQI-gCkbelQucFM")
+GROUP_ID = int(os.getenv('GROUP_ID', "-1002773883024"))
+TOPIC_ORDERS = int(os.getenv('TOPIC_ORDERS', "81003"))
+TOPIC_SUPPORT = int(os.getenv('TOPIC_SUPPORT', "81451"))
+ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS', "841285005").split(',')]
 
 # Сотрудники будут загружаться из Google Sheets
 STAFF_MEMBERS = {}
@@ -53,7 +54,17 @@ def init_google_sheets():
     """Инициализация Google Sheets"""
     global creds, gc, worksheet_orders, worksheet_assignments, worksheet_staff, sheets_enabled
     try:
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        # Попробуем получить credentials из переменных окружения (для деплоя)
+        service_account_json = os.getenv('SERVICE_ACCOUNT_JSON')
+        if service_account_json:
+            # Для облачного деплоя - создаем файл из переменной окружения
+            import json
+            creds_info = json.loads(service_account_json)
+            creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        else:
+            # Для локального запуска - используем файл
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        
         gc = gspread.authorize(creds)
 
         # Открываем таблицу
@@ -481,6 +492,18 @@ def staff_actions_keyboard(order_id) -> InlineKeyboardMarkup:
     ])
 
 
+def staff_management_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура управления сотрудниками"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➕ Добавить сотрудника", callback_data="add_staff"),
+            InlineKeyboardButton(text="📋 Список сотрудников", callback_data="list_staff")
+        ],
+        [
+            InlineKeyboardButton(text="✏️ Изменить должность", callback_data="edit_position"),
+            InlineKeyboardButton(text="🗑️ Удалить сотрудника", callback_data="remove_staff")
+        ]
+    ])
 
 
 # --- Команды бота ---
@@ -543,6 +566,20 @@ async def cmd_status(message: Message):
 
 
 # --- Команды управления сотрудниками ---
+@dp.message(Command("staff"))
+async def cmd_staff(message: Message):
+    """Управление сотрудниками - главное меню"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Эта команда только для администраторов.")
+        return
+
+    await message.answer(
+        "👥 Управление сотрудниками\n\n"
+        "Выберите действие:",
+        reply_markup=staff_management_keyboard()
+    )
+
+
 @dp.message(Command("add_staff"))
 async def cmd_add_staff(message: Message):
     """Добавление сотрудника - начало процесса"""
